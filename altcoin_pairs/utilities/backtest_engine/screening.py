@@ -367,48 +367,7 @@ def structural_break_test(
 
     Fallback: if ruptures not installed, returns (True, 0).
     """
-    if not _HAS_RUPTURES:
-        return True, 0
-
-    n = len(spread)
-    block_size = max(10, int(half_life))
-
-    if n < block_size * 4:
-        return True, 0
-
-    # block means — removes within-block autocorrelation
-    n_blocks = n // block_size
-    blocks = spread[:n_blocks * block_size].reshape(n_blocks, block_size)
-    block_means = blocks.mean(axis=1)
-
-    if n_blocks < 4:
-        return True, 0
-
-    bm_var = np.var(block_means, ddof=1)
-    if bm_var < 1e-20:
-        return True, 0
-
-    # BIC-like penalty on the (approximately i.i.d.) block means
-    pen = pen_mult * bm_var * np.log(n_blocks)
-
-    try:
-        algo = _ruptures.Pelt(model="l2", min_size=2, jump=1).fit(block_means)
-        bkps = algo.predict(pen=pen)
-
-        # bkps always ends with n_blocks (terminal). Real breaks are [:-1].
-        real_breaks = bkps[:-1]
-
-        if not real_breaks:
-            return True, 0
-
-        # check if any break falls in the recent window
-        recent_block = int(n_blocks * (1.0 - recent_pct))
-        recent_breaks = [b for b in real_breaks if b >= recent_block]
-
-        return len(recent_breaks) == 0, len(recent_breaks)
-
-    except Exception:
-        return True, 0
+    pass
 
 
 # =====================================================================
