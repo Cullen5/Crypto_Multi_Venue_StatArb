@@ -326,14 +326,11 @@ def spread_distribution_check(
 
 
 # =====================================================================
-#  Structural break detection (Bai-Perron via ruptures.Pelt)
+#  Structural break detection (Bai-Perron via ruptures.Pelt) - not used
 # =====================================================================
 
-try:
-    import ruptures as _ruptures
-    _HAS_RUPTURES = True
-except ImportError:
-    _HAS_RUPTURES = False
+
+_HAS_RUPTURES = False
 
 
 def structural_break_test(
