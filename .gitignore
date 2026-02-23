@@ -2,3 +2,9 @@ data/
 data_1m/
 data_complete/
 dataDEX/
+__pycache__/
+venv/
+DGW_Round2_Case_Study_8th Feb.pdf
+reports*/
+.claude/
+figures/
