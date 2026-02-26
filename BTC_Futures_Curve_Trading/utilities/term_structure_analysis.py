@@ -749,6 +749,8 @@ class TermStructureAnalysis:
         print("\n" + "═" * 60)
         print("  ANALYSIS COMPLETE")
         print("═" * 60)
+
+        self.save_report()
         return results
 
     def save_report(self, figdir: str = None):
@@ -764,12 +766,12 @@ class TermStructureAnalysis:
             print("  matplotlib not available, skipping plots.")
             return
 
+        PERIODS_PER_YEAR = (365.25 * 24) / 8
+        venues = self.venues_available
         print(f"\n  Saving plots to {figdir}/...")
 
-        # ── Plot 1: Term structure over time ──
+        # ── 01a: Spot vs futures price ──
         if not self.front.empty:
-            fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
-
             daily = (self.front.sort_values("datetime")
                      .groupby("date")
                      .agg(spot=("spot_close", "last"),
@@ -777,16 +779,23 @@ class TermStructureAnalysis:
                           basis=("annualized_basis_pct", "last"))
                      .reset_index())
 
-            axes[0].plot(daily["date"], daily["spot"],
-                         label="Spot", linewidth=1, alpha=0.8)
-            axes[0].plot(daily["date"], daily["futures"],
-                         label="Front-month Futures", linewidth=1, alpha=0.8)
-            axes[0].set_ylabel("Price ($)")
-            axes[0].legend()
-            axes[0].set_title("BTC Spot vs Front-Month Futures")
-            axes[0].grid(alpha=0.3)
+            fig, ax = plt.subplots(figsize=(14, 5))
+            ax.plot(daily["date"], daily["spot"],
+                    label="Spot", linewidth=1, alpha=0.8)
+            ax.plot(daily["date"], daily["futures"],
+                    label="Front-month Futures", linewidth=1, alpha=0.8)
+            ax.set_ylabel("Price ($)")
+            ax.legend()
+            ax.set_title("BTC Spot vs Front-Month Futures")
+            ax.grid(alpha=0.3)
 
-            # Basis with regime shading
+            plt.tight_layout()
+            plt.savefig(f"{figdir}/01a_spot_vs_futures.png",
+                        dpi=150, bbox_inches="tight")
+            plt.close()
+            print(f"    01a_spot_vs_futures.png")
+
+            # ── 01b: Annualised basis with regime shading ──
             colors = {
                 "steep_contango": "#d62728",
                 "mild_contango": "#ff7f0e",
@@ -794,45 +803,42 @@ class TermStructureAnalysis:
                 "backwardation": "#1f77b4",
             }
             daily["regime"] = daily["basis"].apply(classify_regime)
+
+            fig, ax = plt.subplots(figsize=(14, 5))
             for regime, color in colors.items():
                 mask = daily["regime"] == regime
-                axes[1].fill_between(
+                ax.fill_between(
                     daily["date"], 0, daily["basis"],
                     where=mask, alpha=0.3, color=color, label=regime)
-            axes[1].axhline(0, color="black", linewidth=0.5)
-            axes[1].set_ylabel("Annualised Basis (%)")
-            axes[1].set_title("Futures Basis (Annualised) with Regime Shading")
-            axes[1].legend(fontsize=8)
-            axes[1].grid(alpha=0.3)
+            ax.axhline(0, color="black", linewidth=0.5)
+            ax.set_ylabel("Annualised Basis (%)")
+            ax.set_title("Futures Basis (Annualised) with Regime Shading")
+            ax.legend(fontsize=8)
+            ax.grid(alpha=0.3)
 
             plt.tight_layout()
-            plt.savefig(f"{figdir}/01_term_structure.png",
+            plt.savefig(f"{figdir}/01b_basis_regimes.png",
                         dpi=150, bbox_inches="tight")
             plt.close()
-            print(f"    01_term_structure.png")
+            print(f"    01b_basis_regimes.png")
 
-        # ── Plot 2: Multi-venue funding rates ──
-        venues = self.venues_available
+        # ── 02: Multi-venue funding rates ──
         if venues:
-            PERIODS_PER_YEAR = (365.25 * 24) / 8
             fd = self.funding.copy()
 
-            fig, axes = plt.subplots(1, 1, figsize=(14, 8))
-
-            # Raw funding rates (rolling 7d average for readability)
-            # Each venue plotted only where it has data (no NaN gaps)
+            fig, ax = plt.subplots(figsize=(14, 6))
             for v in venues:
                 series = fd.set_index("datetime")[v].dropna()
                 if series.empty:
                     continue
                 rolling = series.rolling("7D", min_periods=1).mean() * PERIODS_PER_YEAR * 100
-                axes.plot(rolling.index, rolling.values,
-                             label=v, linewidth=1, alpha=0.8)
-            axes.axhline(0, color="black", linewidth=0.5)
-            axes.set_ylabel("Annualised Funding (%)")
-            axes.set_title("Funding Rates by Venue (7d Rolling Average)")
-            axes.legend()
-            axes.grid(alpha=0.3)
+                ax.plot(rolling.index, rolling.values,
+                        label=v, linewidth=1, alpha=0.8)
+            ax.axhline(0, color="black", linewidth=0.5)
+            ax.set_ylabel("Annualised Funding (%)")
+            ax.set_title("Funding Rates by Venue (7d Rolling Average)")
+            ax.legend()
+            ax.grid(alpha=0.3)
 
             plt.tight_layout()
             plt.savefig(f"{figdir}/02_funding_rates.png",
@@ -840,7 +846,57 @@ class TermStructureAnalysis:
             plt.close()
             print(f"    02_funding_rates.png")
 
-        # ── Plot 3: Regime distribution ──
+        # ── 03: Cross-venue funding spreads ──
+        if len(venues) >= 2:
+            fd = self.funding.copy()
+
+            fig, ax = plt.subplots(figsize=(14, 6))
+            for i, v1 in enumerate(venues):
+                for v2 in venues[i + 1:]:
+                    spread = (fd[v1] - fd[v2]).dropna() * PERIODS_PER_YEAR * 100
+                    spread_ts = fd.loc[spread.index, "datetime"]
+                    rolling = pd.Series(
+                        spread.values, index=spread_ts
+                    ).rolling("7D", min_periods=1).mean()
+                    ax.plot(rolling.index, rolling.values,
+                            linewidth=1, alpha=0.8, label=f"{v1} - {v2}")
+            ax.axhline(0, color="black", linewidth=0.5)
+            ax.set_ylabel("Annualised Spread (%)")
+            ax.set_title("Cross-Venue Funding Spreads (7d Rolling Average)")
+            ax.legend(fontsize=8)
+            ax.grid(alpha=0.3)
+
+            plt.tight_layout()
+            plt.savefig(f"{figdir}/03_cross_venue_spreads.png",
+                        dpi=150, bbox_inches="tight")
+            plt.close()
+            print(f"    03_cross_venue_spreads.png")
+
+        # ── 04: Funding data coverage heatmap ──
+        if venues:
+            fd = self.funding.copy()
+            fd["date"] = fd["datetime"].dt.normalize()
+            if fd["date"].dt.tz is not None:
+                fd["date"] = fd["date"].dt.tz_localize(None)
+
+            fig, ax = plt.subplots(figsize=(14, 3))
+            for i, v in enumerate(venues):
+                has_data = fd.groupby("date")[v].apply(lambda x: x.notna().any())
+                dates_with = has_data[has_data].index
+                ax.scatter(dates_with, [i] * len(dates_with),
+                           marker="|", s=10, alpha=0.5, label=v)
+            ax.set_yticks(range(len(venues)))
+            ax.set_yticklabels(venues)
+            ax.set_title("Funding Data Coverage by Venue")
+            ax.grid(alpha=0.3, axis="x")
+
+            plt.tight_layout()
+            plt.savefig(f"{figdir}/04_data_coverage.png",
+                        dpi=150, bbox_inches="tight")
+            plt.close()
+            print(f"    04_data_coverage.png")
+
+        # ── 05: Regime distribution ──
         if hasattr(self, "_regime_df") and not self._regime_df.empty:
             regime_cols = [c for c in self._regime_df.columns
                            if c.endswith("_regime")]
@@ -866,15 +922,67 @@ class TermStructureAnalysis:
                 ax.set_xticks(x + width * len(bar_data) / 2)
                 ax.set_xticklabels(regime_order, rotation=15)
                 ax.set_ylabel("% of Time")
-                ax.set_title("Regime Distribution by Venue")
+                ax.set_title("Regime Distribution by Venue/Source")
                 ax.legend()
                 ax.grid(alpha=0.3, axis="y")
 
                 plt.tight_layout()
-                plt.savefig(f"{figdir}/03_regimes.png",
+                plt.savefig(f"{figdir}/05_regimes.png",
                             dpi=150, bbox_inches="tight")
                 plt.close()
-                print(f"    03_regimes.png")
+                print(f"    05_regimes.png")
+
+        # ── 06: Basis distribution histogram ──
+        if not self.front.empty:
+            daily = (self.front.sort_values("datetime")
+                     .groupby("date")["annualized_basis_pct"].last()
+                     .dropna())
+
+            fig, ax = plt.subplots(figsize=(10, 5))
+            ax.hist(daily.values, bins=50, alpha=0.7, color="#1f77b4",
+                    edgecolor="white")
+            ax.axvline(daily.mean(), color="#d62728", linestyle="--",
+                       label=f"Mean: {daily.mean():.1f}%")
+            ax.axvline(daily.median(), color="#ff7f0e", linestyle="--",
+                       label=f"Median: {daily.median():.1f}%")
+            ax.set_xlabel("Annualised Basis (%)")
+            ax.set_ylabel("Days")
+            ax.set_title("Distribution of Annualised Futures Basis")
+            ax.legend()
+            ax.grid(alpha=0.3, axis="y")
+
+            plt.tight_layout()
+            plt.savefig(f"{figdir}/06_basis_distribution.png",
+                        dpi=150, bbox_inches="tight")
+            plt.close()
+            print(f"    06_basis_distribution.png")
+
+        # ── 07: Lead/lag cross-correlation (Q1) ──
+        if "binance" in venues and "hyperliquid" in venues:
+            fd = self.funding.copy()
+            b = fd[["datetime", "binance", "hyperliquid"]].dropna()
+            if len(b) > 20:
+                lags = range(-12, 13)
+                xcorrs = [b["binance"].corr(b["hyperliquid"].shift(lag))
+                          for lag in lags]
+
+                fig, ax = plt.subplots(figsize=(10, 5))
+                lag_hours = [l * 8 for l in lags]
+                ax.bar(lag_hours, xcorrs, width=6, alpha=0.7, color="#2ca02c")
+                best_idx = np.argmax(np.abs(xcorrs))
+                ax.bar(lag_hours[best_idx], xcorrs[best_idx],
+                       width=6, color="#d62728", label=f"Peak: {lag_hours[best_idx]}h")
+                ax.set_xlabel("Lag (hours, positive = Binance leads)")
+                ax.set_ylabel("Correlation")
+                ax.set_title("Binance vs Hyperliquid Funding Cross-Correlation")
+                ax.legend()
+                ax.grid(alpha=0.3)
+
+                plt.tight_layout()
+                plt.savefig(f"{figdir}/07_lead_lag_xcorr.png",
+                            dpi=150, bbox_inches="tight")
+                plt.close()
+                print(f"    07_lead_lag_xcorr.png")
 
         print("  Done.")
 
